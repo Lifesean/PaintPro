@@ -322,6 +322,114 @@ const PolygonTool = createShapeTool('polygon', '다각형', (ctx, start, p, stat
   else ctx.stroke();
 });
 
+// ---- 왜곡(Distort) 기능 ----
+// 숫자 값(강도)을 입력받아 캔버스 전체 픽셀을 파도/스월 형태로 왜곡시키는 필터.
+// 다른 그림판에는 없는 PaintPro만의 차별화 기능.
+function applyWaveDistortion(canvas, ctx, amount) {
+  const w = canvas.width, h = canvas.height;
+  const src = ctx.getImageData(0, 0, w, h);
+  const dst = ctx.createImageData(w, h);
+  const srcData = src.data, dstData = dst.data;
+  const freq = 0.04;
+  const cx = w / 2, cy = h / 2;
+  const maxR = Math.hypot(cx, cy);
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx = x - cx, dy = y - cy;
+      const r = Math.hypot(dx, dy) / maxR;
+      const swirl = amount * 0.02 * (1 - r);
+      const angle = Math.atan2(dy, dx) + swirl;
+      const wave = Math.sin(y * freq + amount * 0.1) * amount * 0.5
+                 + Math.cos(x * freq + amount * 0.1) * amount * 0.5;
+
+      let sx = cx + Math.cos(angle) * Math.hypot(dx, dy) + wave;
+      let sy = cy + Math.sin(angle) * Math.hypot(dx, dy) + wave;
+
+      sx = Math.round(sx);
+      sy = Math.round(sy);
+
+      const idx = (y * w + x) * 4;
+      if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
+        const sidx = (sy * w + sx) * 4;
+        dstData[idx] = srcData[sidx];
+        dstData[idx + 1] = srcData[sidx + 1];
+        dstData[idx + 2] = srcData[sidx + 2];
+        dstData[idx + 3] = srcData[sidx + 3];
+      } else {
+        dstData[idx] = 255;
+        dstData[idx + 1] = 255;
+        dstData[idx + 2] = 255;
+        dstData[idx + 3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(dst, 0, 0);
+}
+
+// 국소 왜곡 브러시: 드래그하는 방향과 강도(state.distortAmount)에 비례하여
+// 브러시 반경 안의 픽셀을 밀어내는 리퀴파이(liquify) 스타일 도구.
+const DistortBrushTool = {
+  name: 'distortBrush',
+  label: '왜곡 브러시',
+  onDown(p) {
+    this.last = p;
+  },
+  onMove(p, ctx, state) {
+    const dx = p.x - this.last.x;
+    const dy = p.y - this.last.y;
+    const strength = (state.distortAmount || 0) / 25;
+    const radius = Math.max(10, state.size * 3);
+    if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+      warpArea(ctx, p, radius, dx, dy, strength);
+    }
+    this.last = p;
+  },
+  onUp() {}
+};
+
+function warpArea(ctx, center, radius, dx, dy, strength) {
+  const canvas = ctx.canvas;
+  const x0 = Math.max(0, Math.floor(center.x - radius));
+  const y0 = Math.max(0, Math.floor(center.y - radius));
+  const w = Math.min(canvas.width - x0, Math.ceil(radius * 2));
+  const h = Math.min(canvas.height - y0, Math.ceil(radius * 2));
+  if (w <= 0 || h <= 0) return;
+
+  const src = ctx.getImageData(x0, y0, w, h);
+  const dst = ctx.createImageData(w, h);
+  const srcData = src.data, dstData = dst.data;
+  const localCx = center.x - x0, localCy = center.y - y0;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const cx = x - localCx, cy = y - localCy;
+      const dist = Math.hypot(cx, cy);
+      const idx = (y * w + x) * 4;
+      let sx = x, sy = y;
+      if (dist < radius) {
+        const falloff = Math.pow(1 - dist / radius, 2);
+        sx = x - dx * strength * falloff;
+        sy = y - dy * strength * falloff;
+      }
+      const sxi = Math.round(sx), syi = Math.round(sy);
+      if (sxi >= 0 && sxi < w && syi >= 0 && syi < h) {
+        const sidx = (syi * w + sxi) * 4;
+        dstData[idx] = srcData[sidx];
+        dstData[idx + 1] = srcData[sidx + 1];
+        dstData[idx + 2] = srcData[sidx + 2];
+        dstData[idx + 3] = srcData[sidx + 3];
+      } else {
+        dstData[idx] = srcData[idx];
+        dstData[idx + 1] = srcData[idx + 1];
+        dstData[idx + 2] = srcData[idx + 2];
+        dstData[idx + 3] = srcData[idx + 3];
+      }
+    }
+  }
+  ctx.putImageData(dst, x0, y0);
+}
+
 // ---- 초기화 ----
 document.addEventListener('DOMContentLoaded', () => {
   const canvas = document.getElementById('canvas');
@@ -329,11 +437,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const state = {
     color: document.getElementById('colorPicker').value,
     size: Number(document.getElementById('sizeRange').value),
-    fillShape: document.getElementById('fillShape').checked
+    fillShape: document.getElementById('fillShape').checked,
+    distortAmount: Number(document.getElementById('distortAmount').value)
   };
   const tm = new ToolManager(cm, state);
 
-  const brushes = [PencilTool, MarkerTool, HighlighterTool, CalligraphyTool, SprayTool, EraserTool];
+  const brushes = [PencilTool, MarkerTool, HighlighterTool, CalligraphyTool, SprayTool, EraserTool, DistortBrushTool];
   const shapes = [LineTool, RectTool, CircleTool, TriangleTool, PolygonTool];
 
   brushes.forEach(t => tm.register(t, 'brush'));
@@ -361,6 +470,13 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('fillShape').addEventListener('change', (e) => {
     state.fillShape = e.target.checked;
+  });
+  document.getElementById('distortAmount').addEventListener('input', (e) => {
+    state.distortAmount = Number(e.target.value);
+  });
+  document.getElementById('distortApplyBtn').addEventListener('click', () => {
+    applyWaveDistortion(canvas, cm.ctx, state.distortAmount);
+    cm.saveState();
   });
   document.getElementById('undoBtn').addEventListener('click', () => cm.undo());
   document.getElementById('redoBtn').addEventListener('click', () => cm.redo());
