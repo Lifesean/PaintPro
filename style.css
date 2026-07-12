@@ -32,5 +32,6 @@ body { margin: 0; font-family: sans-serif; }
 }
 #canvas { background: #fff; box-shadow: 0 0 8px rgba(0,0,0,0.3); cursor: crosshair; }
 #toolbar h3 { margin: 0 0 4px 0; font-size: 14px; color: #ccc; }
-#toolbar .hint { font-size: 11px; color: #999; margin: 0; }
-#distortAmount { width: 100%; padding: 4px; border-radius: 4px; border: none; }
+#toolbar .hint { font-size: 11px; color: #999; margin: 0; cursor: default; background: none; padding: 0; }
+#distortAmount, #distortPattern { width: 100%; padding: 4px; border-radius: 4px; border: none; }
+#distortValue { font-weight: bold; color: #5b8def; }
