@@ -23,9 +23,15 @@
     </div>
     <div class="tool-group">
       <h3>왜곡</h3>
-      <label>강도 <input type="number" id="distortAmount" min="-100" max="100" value="20"></label>
-      <button id="distortApplyBtn">전체 왜곡 적용</button>
-      <p class="hint">'왜곡 브러시' 도구로 드래그하면 국소적으로도 왜곡할 수 있어요.</p>
+      <label>패턴
+        <select id="distortPattern"></select>
+      </label>
+      <label>강도 <span id="distortValue">20</span>
+        <input type="range" id="distortAmount" min="-100" max="100" value="20">
+      </label>
+      <button id="distortApplyBtn">적용(확정)</button>
+      <button id="distortResetBtn">미리보기 취소</button>
+      <p class="hint">슬라이더를 움직이면 실시간으로 미리보기가 반영돼요. '왜곡 브러시'로 드래그하면 국소 왜곡도 가능해요.</p>
     </div>
     <div class="tool-group">
       <button id="undoBtn">Undo</button>
