@@ -22,6 +22,12 @@
       <label>굵기 <input type="range" id="sizeRange" min="1" max="50" value="4"></label>
     </div>
     <div class="tool-group">
+      <h3>왜곡</h3>
+      <label>강도 <input type="number" id="distortAmount" min="-100" max="100" value="20"></label>
+      <button id="distortApplyBtn">전체 왜곡 적용</button>
+      <p class="hint">'왜곡 브러시' 도구로 드래그하면 국소적으로도 왜곡할 수 있어요.</p>
+    </div>
+    <div class="tool-group">
       <button id="undoBtn">Undo</button>
       <button id="redoBtn">Redo</button>
       <button id="clearBtn">Clear</button>
