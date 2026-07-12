@@ -62,13 +62,14 @@ class CanvasManager {
 }
 
 class ToolManager {
-  constructor(canvasManager, state) {
+  constructor(canvasManager, state, onAfterStroke) {
     this.cm = canvasManager;
     this.state = state;
     this.tools = {};
     this.groups = {};
     this.activeTool = null;
     this.isDrawing = false;
+    this.onAfterStroke = onAfterStroke || (() => {});
     this._bindEvents();
   }
 
@@ -117,6 +118,9 @@ class ToolManager {
       if (this.activeTool?.onUp) {
         this.activeTool.onUp(this.cm.ctx, this.state);
       }
+      // 실제로 그림이 바뀌었으므로, 남아있던 왜곡 미리보기 기준 이미지를 무효화해야
+      // 다음 왜곡 미리보기가 방금 그린 내용을 지워버리는 버그를 막을 수 있음.
+      this.onAfterStroke();
       this.cm.saveState();
     };
     canvas.addEventListener('mousedown', start);
@@ -291,7 +295,7 @@ const DISTORT_PATTERNS = {
   glass: {
     label: '유리 굴절',
     sample(x, y, amount, w, h) {
-      const n = (Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
+      const n = Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
       const angle = n * Math.PI * 2;
       const r = Math.abs(amount) * 0.3 * Math.abs(Math.sin(x * 0.1) * Math.cos(y * 0.1));
       return { sx: x + Math.cos(angle) * r, sy: y + Math.sin(angle) * r };
@@ -303,11 +307,13 @@ const DISTORT_PATTERNS = {
       const cx = w / 2, cy = h / 2;
       const dx = x - cx, dy = y - cy;
       const dist = Math.hypot(dx, dy);
-      const maxR = Math.hypot(cx, cy);
+      const maxR = Math.hypot(cx, cy) || 1;
       const r = dist / maxR;
-      const factor = Math.pow(r, (100 - amount) / 100 || 0.01);
-      const angle = Math.atan2(dy, dx);
+      // amount(-100~100)를 -0.9~0.9 범위로 매핑해 극단값에서도 안정적으로 동작하도록 보정.
+      const strength = Math.max(-0.9, Math.min(0.9, amount / 100));
+      const factor = Math.pow(r, 1 + strength);
       const newDist = factor * maxR;
+      const angle = Math.atan2(dy, dx);
       return { sx: cx + Math.cos(angle) * newDist, sy: cy + Math.sin(angle) * newDist };
     }
   }
@@ -408,7 +414,13 @@ document.addEventListener('DOMContentLoaded', () => {
     distortAmount: Number(document.getElementById('distortAmount').value),
     distortPattern: document.getElementById('distortPattern').value
   };
-  const tm = new ToolManager(cm, state);
+
+  // distortBase: 왜곡 미리보기의 기준이 되는 스냅샷. 그림을 그리거나 undo/redo/clear를
+  // 하면 반드시 null로 초기화해서, 다음 미리보기가 오래된 상태를 덮어쓰지 않도록 함.
+  let distortBase = null;
+  const invalidateDistortBase = () => { distortBase = null; };
+
+  const tm = new ToolManager(cm, state, invalidateDistortBase);
 
   const brushes = [PencilTool, MarkerTool, HighlighterTool, CalligraphyTool, SprayTool, EraserTool, DistortBrushTool];
   const shapes = [LineTool, RectTool, CircleTool, TriangleTool, PolygonTool];
@@ -443,13 +455,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('sizeRange').addEventListener('input', (e) => { state.size = Number(e.target.value); });
   document.getElementById('fillShape').addEventListener('change', (e) => { state.fillShape = e.target.checked; });
 
-  // 왜곡 미리보기: 슬라이더를 움직이는 동안 실시간으로 캔버스에 반영하고,
-  // 미리보기 시작 시점의 스냅샷(distortBase)을 기준으로 다시 계산해서 중첩 왜곡을 방지.
-  let distortBase = null;
-
   function refreshPreview() {
     if (!distortBase) distortBase = cm.ctx.getImageData(0, 0, canvas.width, canvas.height);
     applyDistortion(canvas, cm.ctx, distortBase, state.distortAmount, state.distortPattern);
+  }
+
+  // 미리보기 취소: 히스토리를 소모하지 않고 캔버스만 미리보기 이전 상태로 복원.
+  function cancelPreview() {
+    if (distortBase) {
+      cm.ctx.putImageData(distortBase, 0, 0);
+      distortBase = null;
+    }
   }
 
   document.getElementById('distortAmount').addEventListener('input', (e) => {
@@ -461,25 +477,29 @@ document.addEventListener('DOMContentLoaded', () => {
     state.distortPattern = e.target.value;
     refreshPreview();
   });
-  document.getElementById('distortAmount').addEventListener('pointerdown', () => {
-    distortBase = cm.ctx.getImageData(0, 0, canvas.width, canvas.height);
-  });
   document.getElementById('distortApplyBtn').addEventListener('click', () => {
     if (!distortBase) distortBase = cm.ctx.getImageData(0, 0, canvas.width, canvas.height);
     applyDistortion(canvas, cm.ctx, distortBase, state.distortAmount, state.distortPattern);
     distortBase = null;
     cm.saveState();
   });
-  document.getElementById('distortResetBtn').addEventListener('click', () => {
-    if (distortBase) {
-      cm.ctx.putImageData(distortBase, 0, 0);
-      distortBase = null;
-    }
-  });
+  document.getElementById('distortResetBtn').addEventListener('click', cancelPreview);
 
-  document.getElementById('undoBtn').addEventListener('click', () => { cm.undo(); distortBase = null; });
-  document.getElementById('redoBtn').addEventListener('click', () => { cm.redo(); distortBase = null; });
-  document.getElementById('clearBtn').addEventListener('click', () => { cm.clear(); distortBase = null; });
+  // Undo/Redo: 왜곡 미리보기가 진행 중이면 먼저 미리보기만 취소하고,
+  // 미리보기가 없을 때만 실제 히스토리를 되돌림 (버그: 이전에는 미리보기 중 Undo가
+  // 히스토리를 한 단계 더 소모해버려 예상보다 과거로 튕기는 문제가 있었음).
+  document.getElementById('undoBtn').addEventListener('click', () => {
+    if (distortBase) { cancelPreview(); return; }
+    cm.undo();
+  });
+  document.getElementById('redoBtn').addEventListener('click', () => {
+    cancelPreview();
+    cm.redo();
+  });
+  document.getElementById('clearBtn').addEventListener('click', () => {
+    cancelPreview();
+    cm.clear();
+  });
   document.getElementById('saveBtn').addEventListener('click', () => {
     const link = document.createElement('a');
     link.download = 'paintpro.png';
